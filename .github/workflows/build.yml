@@ -2,7 +2,7 @@ name: Build Nina APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -18,31 +18,23 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Install platform dependencies
+    - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev libssl-dev libtinfo5 libsqlite3-dev gawk libffi-dev python3-dev cmake libstdc++6
-
-    - name: Install Buildozer and Cython
-      run: |
         pip install --upgrade pip
         pip install buildozer cython virtualenv
 
-    - name: Initialize Buildozer
-      run: buildozer init
-
-    - name: Configure buildozer.spec
+    - name: Build APK
       run: |
+        buildozer init
         sed -i 's/^requirements =.*/requirements = python3, kivy, requests, gtts/' buildozer.spec
         sed -i 's/^#\s*android.permissions =.*/android.permissions = INTERNET, RECORD_AUDIO/' buildozer.spec
         sed -i 's/^#\s*android.archs =.*/android.archs = arm64-v8a/' buildozer.spec
-        # سطر دمج الأيقونة الوردية التي رفعتِها تلقائياً
         sed -i 's/^#\s*icon.filename =.*/icon.filename = %(source.dir)s\/icon.ico/' buildozer.spec
+        buildozer -v android debug action=accept-sdk-license
 
-    - name: Build Android APK with Buildozer
-      run: buildozer -v android debug action=accept-sdk-license
-
-    - name: Upload APK Artifact
+    - name: Upload APK
       uses: actions/upload-artifact@v3
       with:
         name: Nina-AI-Package
