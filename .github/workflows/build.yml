@@ -5,6 +5,10 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+# إجبار جيت هاب على تشغيل كل الأدوات بأحدث نظام Node.js 24 وتجنب التحذيرات
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -32,7 +36,6 @@ jobs:
         sed -i 's/^#\s*android.permissions =.*/android.permissions = INTERNET, RECORD_AUDIO/' buildozer.spec
         sed -i 's/^#\s*android.archs =.*/android.archs = arm64-v8a/' buildozer.spec
         sed -i 's/^#\s*icon.filename =.*/icon.filename = %(source.dir)s\/icon.ico/' buildozer.spec
-        # إجبار السيرفر على استخدام أدوات بناء مستقرة ومقبولة الرخصة
         sed -i 's/^#\s*android.build_tools_version =.*/android.build_tools_version = 34.0.0/' buildozer.spec
         buildozer -v android debug action=accept-sdk-license
 
