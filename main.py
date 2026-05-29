@@ -1,265 +1,834 @@
-import kivy
+# =========================================================
+# NINA AI — FINAL STABLE VERSION
+# Cute Assistant + Smart Memory + Voice + Notifications
+# Arabic / English / Chinese / Korean Support
+# FINAL CLEAN VERSION
+# =========================================================
+
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.label import Label
-from kivy.uix.textinput import TextInput
+from kivy.uix.anchorlayout import AnchorLayout
 from kivy.uix.button import Button
+from kivy.uix.textinput import TextInput
+from kivy.uix.label import Label
 from kivy.uix.scrollview import ScrollView
-from kivy.core.window import Window
+from kivy.uix.image import Image
 from kivy.animation import Animation
+from kivy.core.window import Window
+from kivy.core.text import LabelBase
+from kivy.clock import Clock
+from kivy.graphics import Color, RoundedRectangle
+from kivy.metrics import dp
+
 import requests
 import threading
-import pyttsx3
-import re
 import speech_recognition as sr
-import sounddevice as sd
-from scipy.io import wavfile
 import json
+import re
 import os
-from gtts import gTTS
 
-# ضبط أبعاد الشاشة لتشبه شاشة الهاتف أثناء التجربة على الحاسوب
-Window.size = (400, 700)
-Window.clearcolor = (1, 0.9, 0.94, 1)  # الخلفية الوردية اللطيفة لنينا
+# =========================================================
+# FONT
+# =========================================================
 
-MEMORY_FILE = "nina_memory.json"
-SYSTEM_PROMPT = (
-    "You are Nina, a sweet, loyal, and extremely brilliant AI assistant for Abir Nihal (born in Khenchela, 1999). "
-    "You are an expert in Mathematics, Science, and Academic Research. "
-    "Always maintain your sweet personality, use emojis, and respond in the language she uses (Arabic, English, French, or Chinese)."
+LabelBase.register(
+    name="Noto",
+    fn_regular="NotoSansCJK-Regular.ttc"
 )
 
-# الخط الافتراضي لدعم العربية في الويندوز (سيتم تجاهله في الأندرويد ليعتمد على خط النظام تلقائياً)
-ARABIC_FONT = "Arial"
+# =========================================================
+# WINDOW
+# =========================================================
 
-def load_memory():
-    if os.path.exists(MEMORY_FILE):
-        try:
-            with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except: pass
-    return [{"role": "system", "content": SYSTEM_PROMPT}]
+Window.clearcolor = (1, 0.93, 0.97, 1)
+Window.softinput_mode = "below_target"
 
-def save_memory(history_data):
-    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(history_data, f, ensure_ascii=False, indent=4)
+# =========================================================
+# MEMORY
+# =========================================================
 
-history = load_memory()
-is_awakened = False
-is_busy_mode = False
+MEMORY_FILE = "memory.json"
 
-class NinaAndroidApp(App):
-    def build(self):
-        self.title = "NINA AI - Android Edition 🎓✨"
-        
-        main_layout = BoxLayout(orientation='vertical', padding=15, spacing=10)
-        
-        # عنوان التطبيق الوامض
-        self.title_label = Label(
-            text="NINA AI ✨", 
-            font_size='28sp', 
-            color=(0.76, 0.09, 0.36, 1), 
-            bold=True, 
-            size_hint_y=0.1,
-            font_name=ARABIC_FONT
+default_memory = {
+    "name": "",
+    "likes": [],
+    "notes": [],
+    "history": []
+}
+
+if os.path.exists(MEMORY_FILE):
+
+    try:
+
+        with open(
+            MEMORY_FILE,
+            "r",
+            encoding="utf-8"
+        ) as f:
+
+            memory = json.load(f)
+
+    except:
+
+        memory = default_memory
+
+else:
+
+    memory = default_memory
+
+# =========================================================
+# VOICE
+# =========================================================
+
+VOICE = False
+
+try:
+
+    from jnius import autoclass
+    from time import sleep
+
+    PythonActivity = autoclass(
+        'org.kivy.android.PythonActivity'
+    )
+
+    Locale = autoclass(
+        'java.util.Locale'
+    )
+
+    TextToSpeech = autoclass(
+        'android.speech.tts.TextToSpeech'
+    )
+
+    activity = PythonActivity.mActivity
+
+    tts = TextToSpeech(activity, None)
+
+    sleep(1)
+
+    tts.setPitch(1.0)
+    tts.setSpeechRate(0.92)
+
+    VOICE = True
+
+except Exception as e:
+
+    print(e)
+
+# =========================================================
+# NOTIFICATIONS
+# =========================================================
+
+try:
+
+    from plyer import notification
+
+    def send_notification(title, message):
+
+        notification.notify(
+            title=title,
+            message=message,
+            timeout=5
         )
-        main_layout.add_widget(self.title_label)
-        
-        # منطقة المحادثة
-        scroll = ScrollView(size_hint_y=0.6)
-        self.chat_layout = BoxLayout(orientation='vertical', size_hint_y=None, spacing=10)
-        self.chat_layout.bind(minimum_height=self.chat_layout.setter('height'))
-        
-        self.add_message_to_chat("NINA: Zzz... نينا نائمة لطيفة 🎀 اكتبي أو قولي 'استيقضي' لنبدأ الدراسة! ✨")
-        
-        scroll.add_widget(self.chat_layout)
-        main_layout.add_widget(scroll)
-        
-        # خانة إدخال النصوص
-        self.entry = TextInput(
-            hint_text="اكتبي لنينا هنا... 🌸", 
-            font_size='16sp', 
-            multiline=False, 
-            size_hint_y=0.08, 
+
+except:
+
+    def send_notification(title, message):
+        pass
+
+# =========================================================
+# CHAT BUBBLE
+# =========================================================
+
+class Bubble(Label):
+
+    def __init__(self, text, me=False, **kwargs):
+
+        super().__init__(**kwargs)
+
+        self.text = text
+
+        self.font_name = "Noto"
+
+        self.font_size = "18sp"
+
+        self.markup = True
+
+        self.size_hint_y = None
+
+        self.padding = (25, 20)
+
+        self.text_size = (Window.width * 0.65, None)
+
+        self.halign = "left"
+
+        self.valign = "middle"
+
+        self.color = (0.15, 0.1, 0.15, 1)
+
+        self.bind(
+            texture_size=self.update_size
+        )
+
+        with self.canvas.before:
+
+            if me:
+
+                Color(1, 0.72, 0.86, 1)
+
+            else:
+
+                Color(1, 1, 1, 1)
+
+            self.rect = RoundedRectangle(
+                pos=self.pos,
+                size=self.size,
+                radius=[25]
+            )
+
+        self.bind(pos=self.update_rect)
+        self.bind(size=self.update_rect)
+
+    def update_size(self, *args):
+
+        self.height = self.texture_size[1] + 40
+
+    def update_rect(self, *args):
+
+        self.rect.pos = self.pos
+        self.rect.size = self.size
+
+# =========================================================
+# MAIN UI
+# =========================================================
+
+class ChatUI(BoxLayout):
+
+    def __init__(self, **kwargs):
+
+        super().__init__(
+            orientation="vertical",
+            spacing=10,
+            padding=10,
+            **kwargs
+        )
+
+        # =====================================================
+        # BACKGROUND
+        # =====================================================
+
+        with self.canvas.before:
+
+            Color(1, 0.93, 0.97, 1)
+
+            self.bg = RoundedRectangle(
+                pos=self.pos,
+                size=self.size
+            )
+
+        self.bind(pos=self.update_bg)
+        self.bind(size=self.update_bg)
+
+        # =====================================================
+        # TOP BAR
+        # =====================================================
+
+        top = BoxLayout(
+            size_hint=(1, 0.09)
+        )
+
+        self.title = Label(
+
+            text="♡ NINA AI ♡",
+
+            font_name="Noto",
+
+            font_size="28sp",
+
+            color=(0.92, 0.28, 0.65, 1)
+        )
+
+        top.add_widget(self.title)
+
+        self.add_widget(top)
+
+        # =====================================================
+        # AVATAR
+        # =====================================================
+
+        self.avatar_box = AnchorLayout(
+            size_hint=(1, 0.27)
+        )
+
+        self.avatar = Image(
+            source="icon.png",
+            size_hint=(None, None),
+            size=(220, 220)
+        )
+
+        self.avatar_box.add_widget(self.avatar)
+
+        self.add_widget(self.avatar_box)
+
+        # =====================================================
+        # CHAT AREA
+        # =====================================================
+
+        self.scroll = ScrollView(
+            size_hint=(1, 0.50)
+        )
+
+        self.chat_layout = BoxLayout(
+            orientation="vertical",
+            spacing=12,
+            padding=10,
+            size_hint_y=None
+        )
+
+        self.chat_layout.bind(
+            minimum_height=self.chat_layout.setter(
+                'height'
+            )
+        )
+
+        self.scroll.add_widget(
+            self.chat_layout
+        )
+
+        self.add_widget(
+            self.scroll
+        )
+
+        # =====================================================
+        # INPUT AREA
+        # =====================================================
+
+        bottom = BoxLayout(
+            size_hint=(1, None),
+            height=dp(65),
+            spacing=8
+        )
+
+        self.input = TextInput(
+
+            hint_text="Talk to Nina...",
+
+            multiline=False,
+
+            font_name="Noto",
+
+            font_size="18sp",
+
+            size_hint=(0.65, 1),
+
+            background_normal='',
+
+            background_active='',
+
             background_color=(1, 1, 1, 1),
-            font_name=ARABIC_FONT
+
+            foreground_color=(0.2, 0.1, 0.2, 1),
+
+            cursor_color=(1, 0.4, 0.8, 1),
+
+            padding=(20, 20)
         )
-        self.entry.bind(on_text_validate=self.on_send_text)
-        main_layout.add_widget(self.entry)
-        
-        # الأزرار
-        buttons_layout = BoxLayout(orientation='horizontal', size_hint_y=0.1, spacing=10)
-        
+
+        # =====================================================
+        # VOICE BUTTON
+        # =====================================================
+
         self.voice_btn = Button(
-            text="🎤 VOICE", 
-            font_size='16sp', 
-            background_color=(0.73, 0.4, 0.78, 1), 
-            bold=True,
-            font_name=ARABIC_FONT
-        )
-        self.voice_btn.bind(on_release=self.on_voice_click)
-        
-        send_btn = Button(
-            text="SEND 🌸", 
-            font_size='16sp', 
-            background_color=(1, 0.31, 0.64, 1), 
-            bold=True,
-            font_name=ARABIC_FONT
-        )
-        send_btn.bind(on_release=self.on_send_text)
-        
-        buttons_layout.add_widget(self.voice_btn)
-        buttons_layout.add_widget(send_btn)
-        main_layout.add_widget(buttons_layout)
-        
-        return main_layout
 
-    def add_message_to_chat(self, text):
-        msg_label = Label(
-            text=text, 
-            font_size='15sp', 
-            color=(0.2, 0.2, 0.2, 1), 
-            halign='left', 
-            valign='middle', 
-            size_hint_y=None, 
-            height=60,
-            font_name=ARABIC_FONT
-        )
-        msg_label.bind(width=lambda listener, value: msg_label.setter('text_size')(msg_label, (value, None)))
-        self.chat_layout.add_widget(msg_label)
+            text="Voice",
 
-    def start_talking_animation(self):
-        anim = Animation(opacity=0.4, duration=0.5) + Animation(opacity=1.0, duration=0.5)
+            font_name="Noto",
+
+            font_size="18sp",
+
+            size_hint=(0.17, 1),
+
+            background_normal='',
+
+            background_color=(1, 0.75, 0.88, 1),
+
+            color=(1, 1, 1, 1)
+        )
+
+        self.voice_btn.bind(
+            on_press=self.listen_voice
+        )
+
+        # =====================================================
+        # SEND BUTTON
+        # =====================================================
+
+        self.send_btn = Button(
+
+            text="Send",
+
+            font_name="Noto",
+
+            font_size="18sp",
+
+            size_hint=(0.18, 1),
+
+            background_normal='',
+
+            background_color=(1, 0.45, 0.75, 1),
+
+            color=(1, 1, 1, 1)
+        )
+
+        self.send_btn.bind(
+            on_press=self.send_message
+        )
+
+        bottom.add_widget(self.input)
+        bottom.add_widget(self.voice_btn)
+        bottom.add_widget(self.send_btn)
+
+        self.add_widget(bottom)
+
+        # =====================================================
+        # WELCOME
+        # =====================================================
+
+        self.add_bot_message(
+            "Nina Ready To Talk ✨"
+        )
+
+    # =====================================================
+    # UPDATE BG
+    # =====================================================
+
+    def update_bg(self, *args):
+
+        self.bg.pos = self.pos
+        self.bg.size = self.size
+
+    # =====================================================
+    # USER MESSAGE
+    # =====================================================
+
+    def add_user_message(self, text):
+
+        bubble = Bubble(
+            text,
+            me=True
+        )
+
+        wrapper = AnchorLayout(
+            anchor_x='right',
+            size_hint_y=None,
+            height=bubble.height + 20
+        )
+
+        wrapper.add_widget(bubble)
+
+        self.chat_layout.add_widget(wrapper)
+
+        Clock.schedule_once(
+            lambda dt:
+            setattr(self.scroll, 'scroll_y', 0)
+        )
+
+    # =====================================================
+    # BOT MESSAGE
+    # =====================================================
+
+    def add_bot_message(self, text):
+
+        bubble = Bubble(
+            text,
+            me=False
+        )
+
+        wrapper = AnchorLayout(
+            anchor_x='left',
+            size_hint_y=None,
+            height=bubble.height + 20
+        )
+
+        wrapper.add_widget(bubble)
+
+        self.chat_layout.add_widget(wrapper)
+
+        Clock.schedule_once(
+            lambda dt:
+            setattr(self.scroll, 'scroll_y', 0)
+        )
+
+    # =====================================================
+    # AVATAR ANIMATION
+    # =====================================================
+
+    def start_animation(self):
+
+        Animation.stop_all(self.avatar)
+
+        anim = (
+
+            Animation(
+                size=(245, 245),
+                duration=0.35
+            )
+
+            +
+
+            Animation(
+                size=(220, 220),
+                duration=0.35
+            )
+
+        )
+
         anim.repeat = True
-        anim.start(self.title_label)
 
-    def stop_talking_animation(self):
-        Animation.cancel_all(self.title_label)
-        self.title_label.opacity = 1.0
+        anim.start(self.avatar)
 
-    def speak(self, text):
-        def run():
-            self.start_talking_animation()
+    def stop_animation(self):
+
+        Animation.stop_all(self.avatar)
+
+        self.avatar.size = (220, 220)
+
+    # =====================================================
+    # SEND MESSAGE
+    # =====================================================
+
+    def send_message(self, instance):
+
+        text = self.input.text.strip()
+
+        if not text:
+            return
+
+        self.input.text = ""
+
+        self.add_user_message(text)
+
+        self.start_animation()
+
+        threading.Thread(
+            target=self.ask_nina,
+            args=(text,),
+            daemon=True
+        ).start()
+
+    # =====================================================
+    # ASK NINA
+    # =====================================================
+
+    def ask_nina(self, text):
+
+        global memory
+
+        try:
+
+            if "اسمي" in text:
+
+                memory["name"] = text.replace(
+                    "اسمي",
+                    ""
+                ).strip()
+
+            if "my name is" in text.lower():
+
+                memory["name"] = text.lower().replace(
+                    "my name is",
+                    ""
+                ).strip()
+
+            if "نحب" in text.lower() or "i love" in text.lower():
+
+                memory["likes"].append(text)
+
+            if "تذكري" in text.lower() or "remember" in text.lower():
+
+                memory["notes"].append(text)
+
+            memory["history"].append(
+                f"User: {text}"
+            )
+
+            memory["history"] = memory["history"][-20:]
+
+            with open(
+                MEMORY_FILE,
+                "w",
+                encoding="utf-8"
+            ) as f:
+
+                json.dump(
+                    memory,
+                    f,
+                    ensure_ascii=False,
+                    indent=2
+                )
+
+        except:
+            pass
+
+        # =================================================
+        # LANGUAGE
+        # =================================================
+
+        arabic = re.search(r'[\u0600-\u06FF]', text)
+        chinese = re.search(r'[\u4e00-\u9fff]', text)
+        korean = re.search(r'[\uac00-\ud7af]', text)
+
+        if arabic:
+
+            prompt = f"""
+ردي بدارجة جزائرية لطيفة.
+
+اسم المستخدم:
+{memory['name']}
+
+الاهتمامات:
+{memory['likes']}
+
+المحادثات:
+{memory['history']}
+
+رسالة المستخدم:
+{text}
+"""
+
             try:
-                clean_text = re.sub(r'[^\w\s\u0600-\u06FF\u4e00-\u9fff]', '', text).strip()
-                if not clean_text: return
-                has_non_english = any(ord(char) > 127 for char in clean_text)
-                
-                if has_non_english:
-                    is_arabic = any('\u0600' <= char <= '\u06FF' for char in clean_text)
-                    lang_code = 'ar' if is_arabic else 'zh'
-                    tts = gTTS(text=clean_text[:200], lang=lang_code)
-                    tts.save("nina_response.mp3")
-                    os.system("start /min nina_response.mp3")
-                else:
-                    engine = pyttsx3.init()
-                    engine.setProperty('rate', 165)
-                    engine.say(clean_text[:200])
-                    engine.runAndWait()
-            except Exception as e: print("TTS Error:", e)
-            finally:
-                self.stop_talking_animation()
+                tts.setLanguage(Locale("ar"))
+            except:
+                pass
 
-        threading.Thread(target=run, daemon=True).start()
+        elif chinese:
 
-    def on_send_text(self, instance):
-        global is_awakened, is_busy_mode
-        text = self.entry.text.strip()
-        if not text: return
-        
-        self.add_message_to_chat(f"YOU: {text}")
-        self.entry.text = ""
-        clean_text = text.lower()
+            prompt = f"""
+请自然回复。
 
-        if any(kw in clean_text for kw in ["مشغولة", "عندي قراية", "عندي شغل", "busy"]):
-            is_busy_mode = True
-            is_awakened = False
-            reply = "ربي يوفقك عبير الغالية! 🥰 سأنتظركِ هنا، ركزي جيداً! 🌸📚"
-            self.add_message_to_chat(f"NINA: {reply}")
-            self.speak(reply)
-            return
+用户:
+{memory['name']}
 
-        if is_busy_mode and any(kw in clean_text for kw in ["خلصت", "كملت", "رجعت"]):
-            is_busy_mode = False
-            is_awakened = True
-            reply = "يعطيك الصحة عبير البطلة! 🥳 أنا جاهزة لمساعدتكِ الآن في البحوث والرياضيات! ✨"
-            self.add_message_to_chat(f"NINA: {reply}")
-            self.speak(reply)
-            return
+消息:
+{text}
+"""
 
-        if is_busy_mode:
-            reply = "🤫 ركزي في قرايتك يا عبير! سأنتظركِ حتى تخبريني 'كملت'! 🎀"
-            self.add_message_to_chat(f"NINA: {reply}")
-            self.speak(reply)
-            return
-
-        if any(kw in clean_text for kw in ["استيقظي", "استيقضي", "wake up"]):
-            is_awakened = True
-            reply = "أنا مستيقظة وذكية وجاهزة لمساعدتكِ في الدراسة والبحوث يا عبير! 🌸✨"
-            self.add_message_to_chat(f"NINA: {reply}")
-            self.speak(reply)
-            return
-
-        if not is_awakened:
-            reply = "Zzz... قولي 'استيقضي' لنبدأ الدراسة، أو 'أنا مشغولة' للتركيز!"
-            self.add_message_to_chat(f"NINA: {reply}")
-            self.speak(reply)
-            return
-
-        def process():
-            history.append({"role": "user", "content": text})
             try:
-                # تحديث السيرفر والموديل هنا لتفادي الضغط والحظر تلقائياً
-                payload = {
-                    "messages": history,
-                    "model": "mistral-large", 
-                    "jsonMode": False
-                }
-                res = requests.post("https://text.pollinations.ai/", json=payload, timeout=15)
-                if res.status_code == 200:
-                    reply_text = res.text
-                    history.append({"role": "assistant", "content": reply_text})
-                    save_memory(history)
-                    self.add_message_to_chat(f"NINA: {reply_text}")
-                    self.speak(reply_text)
-                else:
-                    self.add_message_to_chat("NINA: السيرفر مشغول حالياً يا عبير، عاودي المحاولة بعد ثوانٍ! 🌸")
-            except: 
-                self.add_message_to_chat("NINA: Internet error, Abir! 🌸")
-        threading.Thread(target=process, daemon=True).start()
+                tts.setLanguage(Locale("zh"))
+            except:
+                pass
 
-    def on_voice_click(self, instance):
-        def run_listen():
+        elif korean:
+
+            prompt = f"""
+한국어로 자연스럽게 답해줘.
+
+사용자:
+{memory['name']}
+
+메시지:
+{text}
+"""
+
             try:
-                self.voice_btn.font_name = ARABIC_FONT
-                self.voice_btn.text = "Listening... 🎧"
-                fs = 44100
-                duration = 4
-                recording = sd.rec(int(duration * fs), samplerate=fs, channels=1, dtype='int16')
-                sd.wait()
-                
-                self.voice_btn.text = "Processing... ⏳"
-                wavfile.write("temp_audio.wav", fs, recording)
-                
-                recognizer = sr.Recognizer()
-                with sr.AudioFile("temp_audio.wav") as source:
-                    audio = recognizer.record(source)
-                    
-                user_text = ""
-                for lang in ["ar-DZ", "en-US", "zh-CN"]:
-                    try:
-                        user_text = recognizer.recognize_google(audio, language=lang)
-                        if user_text.strip(): break
-                    except: continue
-                        
-                if user_text: 
-                    self.entry.text = user_text
-                    self.on_send_text(None)
-                    
-            except Exception as e: print("Voice Input Error:", e)
-            finally: 
-                self.voice_btn.text = "🎤 VOICE"
-        threading.Thread(target=run_listen, daemon=True).start()
+                tts.setLanguage(Locale("ko"))
+            except:
+                pass
 
-if __name__ == '__main__':
-    NinaAndroidApp().run()
+        else:
+
+            prompt = f"""
+Reply naturally in English.
+
+User:
+{memory['name']}
+
+Message:
+{text}
+"""
+
+            try:
+                tts.setLanguage(Locale("en"))
+            except:
+                pass
+
+        # =================================================
+        # API
+        # =================================================
+
+        url = "https://text.pollinations.ai/openai"
+
+        reply = ""
+
+        try:
+
+            response = requests.post(
+
+                url,
+
+                json={
+                    "model": "openai",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ]
+                },
+
+                timeout=40
+            )
+
+            if response.status_code == 200:
+
+                try:
+
+                    data = response.json()
+
+                    reply = data["choices"][0]["message"]["content"]
+
+                except:
+
+                    reply = response.text
+
+            else:
+
+                reply = "Connection Error"
+
+        except Exception as error:
+
+            reply = str(error)
+
+        # =================================================
+        # CLEAN
+        # =================================================
+
+        reply = str(reply)
+
+        reply = reply.replace("*", "")
+        reply = reply.replace("#", "")
+        reply = reply.replace("�", "")
+
+        reply = reply.strip()
+
+        if reply == "":
+            reply = "I couldn't reply."
+
+        Clock.schedule_once(
+            lambda dt:
+            self.finish_reply(reply)
+        )
+
+    # =====================================================
+    # FINISH REPLY
+    # =====================================================
+
+    def finish_reply(self, reply):
+
+        self.stop_animation()
+
+        self.add_bot_message(reply)
+
+        send_notification(
+            "Nina AI",
+            reply[:80]
+        )
+
+        if VOICE:
+
+            try:
+
+                clean_voice = re.sub(
+                    r'[^ء-يa-zA-Z0-9\u4e00-\u9fff\uac00-\ud7af\s]',
+                    '',
+                    reply
+                )
+
+                tts.speak(
+                    clean_voice,
+                    0,
+                    None
+                )
+
+            except:
+                pass
+
+    # =====================================================
+    # VOICE INPUT
+    # =====================================================
+
+    def listen_voice(self, instance):
+
+        self.add_bot_message(
+            "Listening..."
+        )
+
+        threading.Thread(
+            target=self.record_voice,
+            daemon=True
+        ).start()
+
+    def record_voice(self):
+
+        recognizer = sr.Recognizer()
+
+        try:
+
+            with sr.Microphone() as source:
+
+                recognizer.adjust_for_ambient_noise(
+                    source,
+                    duration=1
+                )
+
+                audio = recognizer.listen(
+                    source,
+                    timeout=8,
+                    phrase_time_limit=8
+                )
+
+            text = recognizer.recognize_google(
+                audio,
+                language="ar-DZ"
+            )
+
+            Clock.schedule_once(
+                lambda dt:
+                self.voice_result(text)
+            )
+
+        except Exception as error:
+
+            err = str(error)
+
+            Clock.schedule_once(
+                lambda dt:
+                self.add_bot_message(
+                    f"Error: {err}"
+                )
+            )
+
+    def voice_result(self, text):
+
+        self.input.text = text
+
+        self.send_message(None)
+
+# =========================================================
+# APP
+# =========================================================
+
+class NinaApp(App):
+
+    icon = "icon.png"
+
+    def build(self):
+
+        return ChatUI()
+
+# =========================================================
+# RUN
+# =========================================================
+
+if __name__ == "__main__":
+
+    NinaApp().run()
